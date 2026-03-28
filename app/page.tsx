@@ -28,7 +28,10 @@ export default function Page() {
             不動産投資シミュレーター
           </h1>
           <p className="mt-1 text-sm text-gray-500">
-            物件情報を入力すると即座に投資指標を算出します
+            物件価格と想定年間賃料を入力すると、即座に投資指標を算出します
+          </p>
+          <p className="text-sm text-gray-500">
+            その他の項目は任意で入力可能です
           </p>
         </header>
 
