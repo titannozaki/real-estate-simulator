@@ -19,3 +19,10 @@ input[type="number"]::-webkit-outer-spin-button {
 input[type="number"] {
   -moz-appearance: textfield;
 }
+
+/* 数値入力欄のIME（全角）を無効化 */
+input[inputmode="decimal"],
+input[inputmode="numeric"] {
+  ime-mode: disabled;
+  -webkit-ime-mode: disabled;
+}

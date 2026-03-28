@@ -82,9 +82,9 @@ type OverrideKey = keyof Omit<FormState, "price" | "annualRent" | "repaymentMeth
 function toHalfWidth(s: string): string {
   return s
     .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
-    .replace(/．/g, ".")
-    .replace(/ー/g, "-")
-    .replace(/、/g, ",");
+    .replace(/[．。・]/g, ".")
+    .replace(/[ー−―]/g, "-")
+    .replace(/[、，]/g, ",");
 }
 
 /** カンマを除去して数値文字列に戻す */
@@ -131,6 +131,7 @@ function CommaInput({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const cursorPosRef = useRef<number | null>(null);
+  const composingRef = useRef(false);
 
   // React の再レンダリング後にカーソル位置を復元
   useEffect(() => {
@@ -143,19 +144,10 @@ function CommaInput({
 
   const displayValue = addCommas(value);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const el = e.target;
-    const rawCursor = el.selectionStart ?? 0;
-    const raw = el.value;
-
-    // カーソル位置より前の数字の個数（カンマを除く）
-    const digitsBeforeCursor = raw.slice(0, rawCursor).replace(/,/g, "").length;
-
-    // 全角→半角変換し、数字・小数点・マイナスのみ許可
+  const processValue = (raw: string, cursorPos: number) => {
+    const digitsBeforeCursor = raw.slice(0, cursorPos).replace(/,/g, "").length;
     const halfWidth = toHalfWidth(raw);
     const cleaned = stripCommas(halfWidth).replace(/[^\d.\-]/g, "");
-
-    // フォーマット後のカーソル位置を計算
     const formatted = addCommas(cleaned);
     let count = 0;
     let newPos = formatted.length;
@@ -167,8 +159,20 @@ function CommaInput({
       }
     }
     cursorPosRef.current = newPos;
-
     onChange(cleaned);
+  };
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    // IME変換中はスキップ（compositionEndで処理）
+    if (composingRef.current) return;
+    const el = e.target;
+    processValue(el.value, el.selectionStart ?? 0);
+  };
+
+  const handleCompositionEnd = (e: React.CompositionEvent<HTMLInputElement>) => {
+    composingRef.current = false;
+    const el = e.target as HTMLInputElement;
+    processValue(el.value, el.selectionStart ?? 0);
   };
 
   return (
@@ -181,8 +185,62 @@ function CommaInput({
         style={{ imeMode: "disabled" } as React.CSSProperties}
         value={displayValue}
         onChange={handleChange}
+        onCompositionStart={() => { composingRef.current = true; }}
+        onCompositionEnd={handleCompositionEnd}
         placeholder={placeholder}
         className={className}
+      />
+      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-400">
+        {suffix}
+      </span>
+    </div>
+  );
+}
+
+// ---------- IME対応の数値入力（カンマなし） ----------
+
+function PlainNumericInput({
+  value,
+  onChange,
+  placeholder,
+  suffix,
+  isOverridden,
+}: {
+  value: string;
+  onChange: (raw: string) => void;
+  placeholder: string;
+  suffix: string;
+  isOverridden: boolean;
+}) {
+  const composingRef = useRef(false);
+
+  const processValue = (raw: string) => {
+    const half = toHalfWidth(raw);
+    const cleaned = half.replace(/[^\d.\-]/g, "");
+    onChange(cleaned);
+  };
+
+  return (
+    <div className="relative">
+      <input
+        type="text"
+        inputMode="decimal"
+        autoComplete="off"
+        style={{ imeMode: "disabled" } as React.CSSProperties}
+        value={value}
+        onChange={(e) => {
+          if (composingRef.current) return;
+          processValue(e.target.value);
+        }}
+        onCompositionStart={() => { composingRef.current = true; }}
+        onCompositionEnd={(e) => {
+          composingRef.current = false;
+          processValue((e.target as HTMLInputElement).value);
+        }}
+        placeholder={placeholder}
+        className={`w-full rounded border bg-white px-3 py-1.5 pr-10 text-right text-sm
+          placeholder-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500
+          ${isOverridden ? "border-blue-400" : "border-gray-200"}`}
       />
       <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-400">
         {suffix}
@@ -242,27 +300,13 @@ function OverrideField({
             ${isOverridden ? "border-blue-400" : "border-gray-200"}`}
         />
       ) : (
-        <div className="relative">
-          <input
-            type="text"
-            inputMode="decimal"
-            autoComplete="off"
-            style={{ imeMode: "disabled" } as React.CSSProperties}
-            value={rawValue}
-            onChange={(e) => {
-              const half = toHalfWidth(e.target.value);
-              const cleaned = half.replace(/[^\d.\-]/g, "");
-              onChange(cleaned);
-            }}
-            placeholder={displayDefault}
-            className={`w-full rounded border bg-white px-3 py-1.5 pr-10 text-right text-sm
-              placeholder-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500
-              ${isOverridden ? "border-blue-400" : "border-gray-200"}`}
-          />
-          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-400">
-            {suffix}
-          </span>
-        </div>
+        <PlainNumericInput
+          value={rawValue}
+          onChange={onChange}
+          placeholder={displayDefault}
+          suffix={suffix}
+          isOverridden={isOverridden}
+        />
       )}
     </div>
   );
