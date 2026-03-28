@@ -131,9 +131,7 @@ function CommaInput({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const cursorPosRef = useRef<number | null>(null);
-  const composingRef = useRef(false);
 
-  // React の再レンダリング後にカーソル位置を復元
   useEffect(() => {
     if (cursorPosRef.current !== null && inputRef.current) {
       const pos = cursorPosRef.current;
@@ -144,10 +142,17 @@ function CommaInput({
 
   const displayValue = addCommas(value);
 
-  const processValue = (raw: string, cursorPos: number) => {
-    const digitsBeforeCursor = raw.slice(0, cursorPos).replace(/,/g, "").length;
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const el = e.target;
+    const rawCursor = el.selectionStart ?? 0;
+    const raw = el.value;
+
+    const digitsBeforeCursor = raw.slice(0, rawCursor).replace(/,/g, "").length;
+
+    // 全角→半角変換 + 数字・小数点・マイナスのみ許可
     const halfWidth = toHalfWidth(raw);
     const cleaned = stripCommas(halfWidth).replace(/[^\d.\-]/g, "");
+
     const formatted = addCommas(cleaned);
     let count = 0;
     let newPos = formatted.length;
@@ -162,19 +167,6 @@ function CommaInput({
     onChange(cleaned);
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    // IME変換中はスキップ（compositionEndで処理）
-    if (composingRef.current) return;
-    const el = e.target;
-    processValue(el.value, el.selectionStart ?? 0);
-  };
-
-  const handleCompositionEnd = (e: React.CompositionEvent<HTMLInputElement>) => {
-    composingRef.current = false;
-    const el = e.target as HTMLInputElement;
-    processValue(el.value, el.selectionStart ?? 0);
-  };
-
   return (
     <div className="relative">
       <input
@@ -182,11 +174,8 @@ function CommaInput({
         type="text"
         inputMode="decimal"
         autoComplete="off"
-        style={{ imeMode: "disabled" } as React.CSSProperties}
         value={displayValue}
         onChange={handleChange}
-        onCompositionStart={() => { composingRef.current = true; }}
-        onCompositionEnd={handleCompositionEnd}
         placeholder={placeholder}
         className={className}
       />
@@ -212,30 +201,17 @@ function PlainNumericInput({
   suffix: string;
   isOverridden: boolean;
 }) {
-  const composingRef = useRef(false);
-
-  const processValue = (raw: string) => {
-    const half = toHalfWidth(raw);
-    const cleaned = half.replace(/[^\d.\-]/g, "");
-    onChange(cleaned);
-  };
-
   return (
     <div className="relative">
       <input
         type="text"
         inputMode="decimal"
         autoComplete="off"
-        style={{ imeMode: "disabled" } as React.CSSProperties}
         value={value}
         onChange={(e) => {
-          if (composingRef.current) return;
-          processValue(e.target.value);
-        }}
-        onCompositionStart={() => { composingRef.current = true; }}
-        onCompositionEnd={(e) => {
-          composingRef.current = false;
-          processValue((e.target as HTMLInputElement).value);
+          const half = toHalfWidth(e.target.value);
+          const cleaned = half.replace(/[^\d.\-]/g, "");
+          onChange(cleaned);
         }}
         placeholder={placeholder}
         className={`w-full rounded border bg-white px-3 py-1.5 pr-10 text-right text-sm
