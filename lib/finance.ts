@@ -406,7 +406,8 @@ export function generateMonthlyProjection(input: PropertyInput): MonthlyProjecti
 
   for (let m = 0; m <= totalMonths; m++) {
     let balance = loanBalanceAfterMonths(r.loanAmount, r.interestRate, r.loanTermYears, r.repaymentMethod, m);
-    let cf = m === 0 ? 0 : monthlyCFForMonth(r, m);
+    // 月0: 初期投資（自己資金 = 物件価格 + 諸経費 − 融資額）の支出
+    let cf = m === 0 ? -r.equity : monthlyCFForMonth(r, m);
 
     // 売却月: 売却手取りを加算し、ローンを一括返済
     if (m === totalMonths && m > 0) {
@@ -436,7 +437,8 @@ export function generateProjection(input: PropertyInput): YearlyProjection[] {
 
   for (let y = 0; y <= years; y++) {
     let balance = loanBalanceAfter(r.loanAmount, r.interestRate, r.loanTermYears, r.repaymentMethod, y);
-    let cf = y === 0 ? 0 : annualCFForYear(r, y);
+    // 年0: 初期投資（自己資金 = 物件価格 + 諸経費 − 融資額）の支出
+    let cf = y === 0 ? -r.equity : annualCFForYear(r, y);
 
     // 売却年: 売却手取りを加算し、ローンを一括返済（残債0）
     if (y === years && y > 0) {
