@@ -30,6 +30,8 @@ export interface PropertyInput {
   repaymentMethod?: RepaymentMethod;
   /** 売却時期（年） — デフォルト: 30 */
   holdingYears?: number;
+  /** 売却時期（月） — holdingYears より優先 */
+  holdingMonths?: number;
 }
 
 export interface ResolvedInput {
@@ -49,6 +51,10 @@ export interface ResolvedInput {
   majorRepairYear: number;
   repaymentMethod: RepaymentMethod;
   holdingYears: number;
+  /** 保有月数（常に解決済み） */
+  holdingMonths: number;
+  /** 月単位で指定されたか */
+  isMonthly: boolean;
 }
 
 export type Rank = "S" | "A" | "B" | "C";
@@ -144,13 +150,15 @@ export function resolveInput(input: PropertyInput): ResolvedInput {
   const majorRepairCost = input.majorRepairCost ?? DEFAULTS.majorRepairCost;
   const majorRepairYear = input.majorRepairYear ?? DEFAULTS.majorRepairYear;
   const repaymentMethod = input.repaymentMethod ?? DEFAULTS.repaymentMethod;
-  const holdingYears = input.holdingYears ?? DEFAULTS.holdingYears;
+  const isMonthly = input.holdingMonths !== undefined;
+  const holdingMonths = input.holdingMonths ?? (input.holdingYears ?? DEFAULTS.holdingYears) * 12;
+  const holdingYears = isMonthly ? holdingMonths / 12 : (input.holdingYears ?? DEFAULTS.holdingYears);
 
   return {
     price, annualRent, closingCost, equity, loanAmount,
     interestRate, loanTermYears, vacancyRate, opexRate,
     exitPrice, sellingCost, rentDeclineRate, majorRepairCost, majorRepairYear,
-    repaymentMethod, holdingYears,
+    repaymentMethod, holdingYears, holdingMonths, isMonthly,
   };
 }
 
@@ -249,6 +257,57 @@ function loanBalanceAfter(
   return loanBalanceEqualPayment(loan, rate, termYears, yearsElapsed);
 }
 
+// ---------- 月次ヘルパー ----------
+
+/** 特定の月（1-indexed）の月次ローン返済額 */
+function monthlyDS(
+  loan: number, rate: number, termYears: number, method: RepaymentMethod, month: number,
+): number {
+  if (loan <= 0) return 0;
+  const totalMonths = termYears * 12;
+  if (month > totalMonths) return 0;
+  const mr = rate / 12;
+
+  if (method === "equal_payment") {
+    if (rate === 0) return loan / totalMonths;
+    return loan * (mr * Math.pow(1 + mr, totalMonths)) / (Math.pow(1 + mr, totalMonths) - 1);
+  } else {
+    const monthlyPrincipal = loan / totalMonths;
+    const remaining = Math.max(0, loan - monthlyPrincipal * (month - 1));
+    return monthlyPrincipal + remaining * mr;
+  }
+}
+
+/** N ヶ月後のローン残高 */
+function loanBalanceAfterMonths(
+  loan: number, rate: number, termYears: number, method: RepaymentMethod, monthsElapsed: number,
+): number {
+  if (loan <= 0) return 0;
+  const n = termYears * 12;
+  if (monthsElapsed >= n) return 0;
+  const mr = rate / 12;
+
+  if (method === "equal_principal") {
+    return Math.max(0, loan - (loan / n) * monthsElapsed);
+  }
+  if (rate === 0) return Math.max(0, loan - (loan / n) * monthsElapsed);
+  const mp = loan * (mr * Math.pow(1 + mr, n)) / (Math.pow(1 + mr, n) - 1);
+  const balance = loan * Math.pow(1 + mr, monthsElapsed) - mp * ((Math.pow(1 + mr, monthsElapsed) - 1) / mr);
+  return Math.max(0, balance);
+}
+
+/** 特定の月（1-indexed）の月次キャッシュフロー */
+function monthlyCFForMonth(r: ResolvedInput, month: number): number {
+  const year = Math.ceil(month / 12);
+  const monthlyRent = effectiveRentForYear(r.annualRent, r.vacancyRate, r.rentDeclineRate, year) / 12;
+  const monthlyOpex = monthlyRent * r.opexRate;
+  const ds = monthlyDS(r.loanAmount, r.interestRate, r.loanTermYears, r.repaymentMethod, month);
+  // 大規模修繕: majorRepairYear年目の最初の月に発生
+  const repairMonth = (r.majorRepairYear - 1) * 12 + 1;
+  const repair = (month === repairMonth) ? r.majorRepairCost : 0;
+  return monthlyRent - monthlyOpex - ds - repair;
+}
+
 // ---------- 年次キャッシュフロー計算 ----------
 
 /** y 年目（1-indexed）の実効賃料（家賃下落考慮） */
@@ -330,6 +389,44 @@ export interface YearlyProjection {
   loanBalance: number;
 }
 
+// ---------- 月次プロジェクション（グラフ用） ----------
+
+export interface MonthlyProjection {
+  month: number;
+  cashFlow: number;
+  cumulativeCF: number;
+  loanBalance: number;
+}
+
+export function generateMonthlyProjection(input: PropertyInput): MonthlyProjection[] {
+  const r = resolveInput(input);
+  const totalMonths = r.holdingMonths;
+  const data: MonthlyProjection[] = [];
+  let cumCF = 0;
+
+  for (let m = 0; m <= totalMonths; m++) {
+    let balance = loanBalanceAfterMonths(r.loanAmount, r.interestRate, r.loanTermYears, r.repaymentMethod, m);
+    let cf = m === 0 ? 0 : monthlyCFForMonth(r, m);
+
+    // 売却月: 売却手取りを加算し、ローンを一括返済
+    if (m === totalMonths && m > 0) {
+      const remainingLoan = balance;
+      const netSaleProceeds = r.exitPrice - r.sellingCost - remainingLoan;
+      cf += netSaleProceeds;
+      balance = 0;
+    }
+
+    cumCF += cf;
+    data.push({
+      month: m,
+      cashFlow: Math.round(cf),
+      cumulativeCF: Math.round(cumCF),
+      loanBalance: Math.round(balance),
+    });
+  }
+  return data;
+}
+
 export function generateProjection(input: PropertyInput): YearlyProjection[] {
   const r = resolveInput(input);
   const years = r.holdingYears;
@@ -373,26 +470,52 @@ export function simulate(input: PropertyInput): SimulationResult {
   );
   const annualCF = effectiveRent - annualOpex - annualDebtService;
 
-  // --- IRR（holdingYears 保有想定） ---
+  // --- IRR（保有期間想定） ---
   const initialInvestment = r.equity;
-
-  const cashFlows = [-initialInvestment];
+  let irr: number;
   let cumulativeOperatingCF = 0;
-  for (let y = 1; y < r.holdingYears; y++) {
-    const ycf = annualCFForYear(r, y);
-    cashFlows.push(ycf);
-    cumulativeOperatingCF += ycf;
-  }
-  // 最終年: CF + 売却手取り
-  const remainingLoan = loanBalanceAfter(
-    r.loanAmount, r.interestRate, r.loanTermYears, r.repaymentMethod, r.holdingYears,
-  );
-  const netSaleProceeds = r.exitPrice - r.sellingCost - remainingLoan;
-  const lastYearCF = annualCFForYear(r, r.holdingYears);
-  cumulativeOperatingCF += lastYearCF;
-  cashFlows.push(lastYearCF + netSaleProceeds);
+  let netSaleProceeds: number;
+  let remainingLoan: number;
 
-  const irr = calcIRR(cashFlows);
+  if (r.isMonthly) {
+    // 月次キャッシュフローでIRR計算
+    const totalMonths = r.holdingMonths;
+    const monthlyCFs = [-initialInvestment];
+    for (let m = 1; m < totalMonths; m++) {
+      const mcf = monthlyCFForMonth(r, m);
+      monthlyCFs.push(mcf);
+      cumulativeOperatingCF += mcf;
+    }
+    // 最終月: CF + 売却手取り
+    remainingLoan = loanBalanceAfterMonths(
+      r.loanAmount, r.interestRate, r.loanTermYears, r.repaymentMethod, totalMonths,
+    );
+    netSaleProceeds = r.exitPrice - r.sellingCost - remainingLoan;
+    const lastMonthCF = monthlyCFForMonth(r, totalMonths);
+    cumulativeOperatingCF += lastMonthCF;
+    monthlyCFs.push(lastMonthCF + netSaleProceeds);
+
+    const monthlyIRR = calcIRR(monthlyCFs, 0.01);
+    // 月次IRR → 年次IRRに変換
+    irr = isNaN(monthlyIRR) ? NaN : Math.pow(1 + monthlyIRR, 12) - 1;
+  } else {
+    // 年次キャッシュフローでIRR計算
+    const cashFlows = [-initialInvestment];
+    for (let y = 1; y < r.holdingYears; y++) {
+      const ycf = annualCFForYear(r, y);
+      cashFlows.push(ycf);
+      cumulativeOperatingCF += ycf;
+    }
+    remainingLoan = loanBalanceAfter(
+      r.loanAmount, r.interestRate, r.loanTermYears, r.repaymentMethod, r.holdingYears,
+    );
+    netSaleProceeds = r.exitPrice - r.sellingCost - remainingLoan;
+    const lastYearCF = annualCFForYear(r, r.holdingYears);
+    cumulativeOperatingCF += lastYearCF;
+    cashFlows.push(lastYearCF + netSaleProceeds);
+
+    irr = calcIRR(cashFlows);
+  }
 
   // --- 売却サマリー ---
   const saleSummary: SaleSummary = {

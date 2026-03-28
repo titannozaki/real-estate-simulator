@@ -3,6 +3,7 @@
 import {
   type SimulationResult,
   type YearlyProjection,
+  type MonthlyProjection,
   type Rank,
   type SaleSummary,
 } from "@/lib/finance";
@@ -76,26 +77,39 @@ const CRITERIA: CriteriaRow[] = [
 interface Props {
   result: SimulationResult;
   projection: YearlyProjection[];
+  monthlyProjection?: MonthlyProjection[];
+  holdingPeriodUnit: "years" | "months";
+  holdingPeriodValue: number;
 }
 
 // ---------- メインコンポーネント ----------
 
-export default function Dashboard({ result, projection }: Props) {
+export default function Dashboard({ result, projection, monthlyProjection, holdingPeriodUnit, holdingPeriodValue }: Props) {
   const r = result.resolved;
+  const isMonthly = holdingPeriodUnit === "months";
+  const periodLabel = isMonthly ? `${holdingPeriodValue}ヶ月` : `${r.holdingYears}年`;
 
-  const chartData = projection.map((d) => ({
-    year: `${d.year}年`,
-    yearNum: d.year,
-    キャッシュフロー: Math.round(d.cashFlow / 10_000),
-    累積CF: Math.round(d.cumulativeCF / 10_000),
-    ローン残債: Math.round(d.loanBalance / 10_000),
-  }));
+  const chartData = isMonthly && monthlyProjection
+    ? monthlyProjection.map((d) => ({
+        period: `${d.month}`,
+        periodNum: d.month,
+        キャッシュフロー: Math.round(d.cashFlow / 10_000),
+        累積CF: Math.round(d.cumulativeCF / 10_000),
+        ローン残債: Math.round(d.loanBalance / 10_000),
+      }))
+    : projection.map((d) => ({
+        period: `${d.year}`,
+        periodNum: d.year,
+        キャッシュフロー: Math.round(d.cashFlow / 10_000),
+        累積CF: Math.round(d.cumulativeCF / 10_000),
+        ローン残債: Math.round(d.loanBalance / 10_000),
+      }));
 
   return (
     <div className="space-y-5">
       {/* ===== スコアカード ===== */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <ScoreCard label={`IRR（${r.holdingYears}年）`} value={pct(result.irr.value)} rank={result.irr.rank} sub="内部収益率" />
+        <ScoreCard label={`IRR（${periodLabel}）`} value={pct(result.irr.value)} rank={result.irr.rank} sub="内部収益率" />
         <ScoreCard label="CCR" value={pct(result.ccr.value)} rank={result.ccr.rank} sub="自己資金配当率" />
         <ScoreCard label="返済比率" value={pct(result.debtServiceRatio.value)} rank={result.debtServiceRatio.rank} sub="ローン/賃料" />
         <ScoreCard label="CF利回り" value={pct(result.cashFlowToPrice.value)} rank={result.cashFlowToPrice.rank} sub="CF/物件価格" />
@@ -157,14 +171,14 @@ export default function Dashboard({ result, projection }: Props) {
           <span>運営費率: {pct(r.opexRate)}</span>
           <span>家賃下落率: {pct(r.rentDeclineRate)}/年</span>
           <span>返済: {r.repaymentMethod === "equal_payment" ? "元利均等" : "元金均等"}</span>
-          <span>売却: {r.holdingYears}年後 / {toMan(r.exitPrice)}万</span>
+          <span>売却: {periodLabel}後 / {toMan(r.exitPrice)}万</span>
         </div>
       </div>
 
       {/* ===== 売却サマリー ===== */}
       <div className="rounded-lg border border-gray-200 bg-white p-5">
         <h2 className="mb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">
-          売却サマリー（{r.holdingYears}年後）
+          売却サマリー（{periodLabel}後）
         </h2>
         <div className="space-y-1.5 text-sm">
           <BreakdownRow label="売却額" value={`${toMan(result.saleSummary.exitPrice)} 万円`} />
@@ -194,17 +208,17 @@ export default function Dashboard({ result, projection }: Props) {
       {/* ===== グラフ: CF推移 + ローン残債 ===== */}
       <div className="rounded-lg border border-gray-200 bg-white p-5">
         <h2 className="mb-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">
-          {r.holdingYears}年キャッシュフロー推移 & ローン残債
+          {periodLabel}キャッシュフロー推移 & ローン残債
         </h2>
         <div className="h-64 sm:h-72 md:h-80">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
               <XAxis
-                dataKey="year"
+                dataKey="period"
                 tick={{ fontSize: 11, fill: "#9CA3AF" }}
                 interval="preserveStartEnd"
-                tickFormatter={(v: string) => v.replace("年", "")}
+                tickFormatter={(v: string) => isMonthly ? `${v}M` : `${v}Y`}
                 stroke="#D1D5DB"
               />
               <YAxis
@@ -263,17 +277,17 @@ export default function Dashboard({ result, projection }: Props) {
       {/* ===== グラフ: 年間CF ===== */}
       <div className="rounded-lg border border-gray-200 bg-white p-5">
         <h2 className="mb-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">
-          年間キャッシュフロー
+          {isMonthly ? "月次" : "年間"}キャッシュフロー
         </h2>
         <div className="h-40 sm:h-48">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={chartData.slice(1)} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
               <XAxis
-                dataKey="year"
+                dataKey="period"
                 tick={{ fontSize: 11, fill: "#9CA3AF" }}
                 interval="preserveStartEnd"
-                tickFormatter={(v: string) => v.replace("年", "")}
+                tickFormatter={(v: string) => isMonthly ? `${v}M` : `${v}Y`}
                 stroke="#D1D5DB"
               />
               <YAxis
@@ -299,7 +313,7 @@ export default function Dashboard({ result, projection }: Props) {
                 fillOpacity={0.06}
                 stroke="#3B82F6"
                 strokeWidth={1.5}
-                name="年間CF"
+                name={isMonthly ? "月次CF" : "年間CF"}
               />
             </ComposedChart>
           </ResponsiveContainer>

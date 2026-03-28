@@ -7,8 +7,10 @@ import {
   simulate,
   getDefaults,
   generateProjection,
+  generateMonthlyProjection,
   type SimulationResult,
   type YearlyProjection,
+  type MonthlyProjection,
 } from "@/lib/finance";
 
 // ---------- 型 ----------
@@ -63,6 +65,9 @@ const INITIAL: FormState = {
 export interface SimulationOutput {
   result: SimulationResult;
   projection: YearlyProjection[];
+  monthlyProjection?: MonthlyProjection[];
+  holdingPeriodUnit: "years" | "months";
+  holdingPeriodValue: number;
 }
 
 interface Props {
@@ -292,14 +297,9 @@ export default function InputForm({ onResult }: Props) {
     return price * 0.10;
   }, [price, form.closingCost.override, form.loanAmount.override]);
 
-  // 保有期間を年数に変換
-  const holdingYearsValue = useMemo(() => {
-    if (form.holdingPeriod.override === undefined) return undefined;
-    if (form.holdingPeriodUnit === "months") {
-      return Math.round(form.holdingPeriod.override / 12);
-    }
-    return form.holdingPeriod.override;
-  }, [form.holdingPeriod.override, form.holdingPeriodUnit]);
+  // 保有期間
+  const isMonthlyMode = form.holdingPeriodUnit === "months";
+  const holdingPeriodRawValue = form.holdingPeriod.override;
 
   const output: SimulationOutput | null = useMemo(() => {
     if (price <= 0 || annualRent <= 0) return null;
@@ -319,13 +319,22 @@ export default function InputForm({ onResult }: Props) {
       majorRepairCost: form.majorRepairCost.override,
       majorRepairYear: form.majorRepairYear.override,
       repaymentMethod: form.repaymentMethod,
-      holdingYears: holdingYearsValue,
+      // 月数モード: holdingMonths を渡す、年数モード: holdingYears を渡す
+      ...(isMonthlyMode
+        ? { holdingMonths: holdingPeriodRawValue }
+        : { holdingYears: holdingPeriodRawValue }),
     };
+    const periodValue = isMonthlyMode
+      ? (holdingPeriodRawValue ?? 30 * 12)
+      : (holdingPeriodRawValue ?? 30);
     return {
       result: simulate(input),
       projection: generateProjection(input),
+      monthlyProjection: isMonthlyMode ? generateMonthlyProjection(input) : undefined,
+      holdingPeriodUnit: isMonthlyMode ? "months" : "years",
+      holdingPeriodValue: periodValue,
     };
-  }, [form, price, annualRent, holdingYearsValue]);
+  }, [form, price, annualRent, isMonthlyMode, holdingPeriodRawValue]);
 
   useEffect(() => {
     onResult(output);

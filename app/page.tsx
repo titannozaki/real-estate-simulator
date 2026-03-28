@@ -44,6 +44,9 @@ export default function Page() {
               <Dashboard
                 result={output.result}
                 projection={output.projection}
+                monthlyProjection={output.monthlyProjection}
+                holdingPeriodUnit={output.holdingPeriodUnit}
+                holdingPeriodValue={output.holdingPeriodValue}
               />
             ) : (
               <div className="flex h-full min-h-[400px] items-center justify-center rounded-lg border border-dashed border-gray-200">
